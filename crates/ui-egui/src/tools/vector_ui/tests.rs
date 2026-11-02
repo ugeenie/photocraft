@@ -1481,3 +1481,57 @@ fn path_rows_dragged_onto_the_trash_are_deleted() {
     let doc = &h.state().session.active().unwrap().doc;
     assert_eq!((doc.layers.len(), doc.paths.len()), (layers, 1), "nothing is deleted");
 }
+
+/// The Path Selection options bar shows Photoshop's Path Arrangement buttons: they reorder the
+/// selected component through `path.arrange` (one history step per click); a boundary direction
+/// shows disabled.
+#[test]
+fn path_arrangement_buttons_reorder_the_selected_component() {
+    use egui_kittest::kittest::Queryable;
+    let mut app = app();
+    let layer = app.run("shape.create", json!({"kind": "rect", "rect": [20, 20, 40, 40], "fill": "#ff0000"})).unwrap()["layer"].as_u64().unwrap();
+    let k = |x: f64, y: f64| json!({"anchor": [x, y]});
+    app.run(
+        "shape.edit",
+        json!({"layer": layer, "path": {"subpaths": [
+            {"closed": true, "knots": [k(20.0, 20.0), k(60.0, 20.0), k(60.0, 60.0), k(20.0, 60.0)]},
+            {"closed": true, "knots": [k(100.0, 20.0), k(140.0, 20.0), k(140.0, 60.0), k(100.0, 60.0)]},
+        ]}}),
+    )
+    .unwrap();
+    app.ui.tool = Tool::PathSelection;
+    crate::path_components::press(&mut app, [120.0, 40.0], false);
+    let first_anchor = |app: &PhotocraftApp| {
+        let st = app.session.active().unwrap();
+        let l = st.doc.layer(photocraft_doc::LayerId(layer)).unwrap();
+        let LayerContent::Shape(sh) = &l.content else { panic!("not a shape") };
+        sh.path.subpaths[0].knots[0].anchor
+    };
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1200.0, 48.0)).build_ui_state(
+        |ui, app: &mut PhotocraftApp| {
+            if ui.ctx().fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
+                ui.horizontal_centered(|ui| options_bar(app, ui, Tool::PathSelection));
+            }
+        },
+        app,
+    );
+    PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::Studio);
+    h.run_steps(4);
+    if let Ok(path) = std::env::var("PHOTOCRAFT_ARRANGE_SCREENSHOT") {
+        h.render().unwrap().save(path).unwrap();
+    }
+    // Component 1 is the front-most: Send Backward swaps it with the one before it.
+    h.get_by_label("Send Backward").click();
+    h.run_steps(2);
+    assert_eq!(first_anchor(h.state()), photocraft_geom::Point::new(100.0, 20.0), "Send Backward swapped the selected component");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Send Backward"));
+    // Upstream v0.19 clears the component selection after any path edit (their selection-
+    // validity bug, split out of #10854), so select the moved component again: it now sits at
+    // 100..140. Bring Forward swaps it back.
+    crate::path_components::press(h.state_mut(), [120.0, 40.0], false);
+    h.run_steps(2);
+    h.get_by_label("Bring Forward").click();
+    h.run_steps(2);
+    assert_eq!(first_anchor(h.state()), photocraft_geom::Point::new(20.0, 20.0), "Bring Forward swapped it back");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Bring Forward"));
+}

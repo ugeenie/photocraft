@@ -14,6 +14,43 @@ fn solid(color: [f32; 4]) -> photocraft_doc::Fill {
     photocraft_doc::Fill::Solid(photocraft_doc::Color::rgba(color[0], color[1], color[2], color[3]))
 }
 
+/// Photoshop's Path Arrangement, the four buttons in the Path Selection options bar: Bring to
+/// Front / Bring Forward / Send Backward / Send to Back reorder the selected components through
+/// `path.arrange`. A boundary direction shows disabled, as in Photoshop; a `PathOp::Join` subpath
+/// moves with its component.
+fn path_arrangement(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
+    let Some((r, path, heads)) = crate::path_components::selected(app) else { return };
+    let components = path.components();
+    let sel: Vec<usize> =
+        heads.iter().flat_map(|h| components.iter().find(|c| c.start == *h).map(|c| c.clone().collect::<Vec<_>>()).unwrap_or_default()).collect();
+    let (Some(&min), Some(&max)) = (sel.first(), sel.last()) else { return };
+    let n = path.subpaths.len();
+    let free_after = (max + 1..n).any(|i| !sel.contains(&i));
+    let free_before = (0..min).any(|i| !sel.contains(&i));
+    let buttons = [
+        ("align-edge-top", tl!("Bring to Front"), "front", max + 1 < n),
+        ("distribute-top", tl!("Bring Forward"), "forward", free_after),
+        ("distribute-bottom", tl!("Send Backward"), "backward", free_before),
+        ("align-edge-bottom", tl!("Send to Back"), "back", min > 0),
+    ];
+    crate::widgets::vline(ui, 22.0);
+    for (icon, tip, by, enabled) in buttons {
+        ui.add_enabled_ui(enabled, |ui| {
+            if crate::icons::button(ui, icon, 22.0, false, tip).clicked() {
+                let mut params = r.params(app);
+                if let Some(o) = params.as_object_mut() {
+                    o.insert("subpaths".into(), json!(sel));
+                    o.insert("by".into(), json!(by));
+                }
+                if let Err(e) = app.run("path.arrange", params) {
+                    app.ui.status = e;
+                    app.ui.status_error = true;
+                }
+            }
+        });
+    }
+}
+
 /// The shape layer the options bar edits.
 struct SelectedShape {
     doc: photocraft_doc::DocId,
@@ -33,6 +70,10 @@ fn selected_shape(session: &photocraft_engine::Session) -> Option<SelectedShape>
 }
 
 pub(crate) fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui, tool: Tool) {
+    // Path Arrangement runs before the tool_options borrow below (it dispatches commands).
+    if matches!(tool, Tool::PathSelection | Tool::DirectSelection) {
+        path_arrangement(app, ui);
+    }
     let t = Tokens::get(ui.ctx());
     let lbl = |ui: &mut egui::Ui, s: &str| {
         let label = ui.label(egui::RichText::new(s).color(t.text_dim).size(12.0));

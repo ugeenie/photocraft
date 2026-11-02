@@ -120,6 +120,7 @@ pub use cmd::mode_cmds;
 pub use cmd::multichannel_cmds;
 pub use cmd::notes_cmds;
 pub use cmd::paint_cmds;
+use cmd::path_arrange_cmds;
 use cmd::path_clip_cmds;
 use cmd::path_edit_cmds;
 pub use cmd::pattern_cmds;
